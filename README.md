@@ -4,7 +4,7 @@
 
 ![screenshot of gh pr status](https://user-images.githubusercontent.com/98482/84171218-327e7a80-aa40-11ea-8cd1-5177fc2d0e72.png)
 
-GitHub CLI is supported for users on GitHub.com and GitHub Enterprise Server 2.20+ with support for macOS, Windows, and Linux.
+GitHub CLI is supported for users on GitHub.com, GitHub Enterprise Cloud, and GitHub Enterprise Server 2.20+ with support for macOS, Windows, and Linux.
 
 ## Documentation
 
@@ -59,6 +59,14 @@ Additional Conda installation options available on the [gh-feedstock page](https
 | `curl -sS https://webi.sh/gh \| sh` | `webi gh@stable` |
 
 For more information about the Webi installer see [its homepage](https://webinstall.dev/).
+
+#### Flox
+
+| Install:          | Upgrade:                |
+| ----------------- | ----------------------- |
+| `flox install gh` | `flox upgrade toplevel` |
+
+For more information about Flox, see [its homepage](https://flox.dev)
 
 ### Linux & BSD
 

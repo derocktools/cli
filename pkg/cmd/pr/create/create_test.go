@@ -40,6 +40,7 @@ func TestNewCmdCreate(t *testing.T) {
 		tty       bool
 		stdin     string
 		cli       string
+		config    string
 		wantsErr  bool
 		wantsOpts CreateOptions
 	}{
@@ -202,6 +203,64 @@ func TestNewCmdCreate(t *testing.T) {
 			cli:      "--web --dry-run",
 			wantsErr: true,
 		},
+		{
+			name:     "editor by cli",
+			tty:      true,
+			cli:      "--editor",
+			wantsErr: false,
+			wantsOpts: CreateOptions{
+				Title:               "",
+				Body:                "",
+				RecoverFile:         "",
+				WebMode:             false,
+				EditorMode:          true,
+				MaintainerCanModify: true,
+			},
+		},
+		{
+			name:     "editor by config",
+			tty:      true,
+			cli:      "",
+			config:   "prefer_editor_prompt: enabled",
+			wantsErr: false,
+			wantsOpts: CreateOptions{
+				Title:               "",
+				Body:                "",
+				RecoverFile:         "",
+				WebMode:             false,
+				EditorMode:          true,
+				MaintainerCanModify: true,
+			},
+		},
+		{
+			name:     "editor and web",
+			tty:      true,
+			cli:      "--editor --web",
+			wantsErr: true,
+		},
+		{
+			name:     "can use web even though editor is enabled by config",
+			tty:      true,
+			cli:      `--web --title mytitle --body "issue body"`,
+			config:   "prefer_editor_prompt: enabled",
+			wantsErr: false,
+			wantsOpts: CreateOptions{
+				Title:               "mytitle",
+				Body:                "issue body",
+				TitleProvided:       true,
+				BodyProvided:        true,
+				RecoverFile:         "",
+				WebMode:             true,
+				EditorMode:          false,
+				MaintainerCanModify: true,
+			},
+		},
+		{
+			name:     "editor with non-tty",
+			tty:      false,
+			cli:      "--editor",
+			wantsErr: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -215,6 +274,12 @@ func TestNewCmdCreate(t *testing.T) {
 
 			f := &cmdutil.Factory{
 				IOStreams: ios,
+				Config: func() (gh.Config, error) {
+					if tt.config != "" {
+						return config.NewFromString(tt.config), nil
+					}
+					return config.NewBlankConfig(), nil
+				},
 			}
 
 			var opts *CreateOptions
@@ -1015,7 +1080,7 @@ func Test_createRun(t *testing.T) {
 					}
 				}
 			},
-			expectedErrOut: "Opening github.com/OWNER/REPO/compare/master...feature in your browser.\n",
+			expectedErrOut: "Opening https://github.com/OWNER/REPO/compare/master...feature in your browser.\n",
 			expectedBrowse: "https://github.com/OWNER/REPO/compare/master...feature?body=&expand=1",
 		},
 		{
@@ -1048,7 +1113,7 @@ func Test_createRun(t *testing.T) {
 					}
 				}
 			},
-			expectedErrOut: "Opening github.com/OWNER/REPO/compare/master...feature in your browser.\n",
+			expectedErrOut: "Opening https://github.com/OWNER/REPO/compare/master...feature in your browser.\n",
 			expectedBrowse: "https://github.com/OWNER/REPO/compare/master...feature?body=&expand=1&projects=ORG%2F1",
 		},
 		{
@@ -1145,7 +1210,7 @@ func Test_createRun(t *testing.T) {
 			},
 			promptStubs: func(pm *prompter.PrompterMock) {
 				pm.InputFunc = func(p, d string) (string, error) {
-					if p == "Title" {
+					if p == "Title (required)" {
 						return d, nil
 					} else {
 						return "", prompter.NoSuchPromptErr(p)
@@ -1251,7 +1316,7 @@ func Test_createRun(t *testing.T) {
 				}
 
 				pm.InputFunc = func(p, d string) (string, error) {
-					if p == "Title" {
+					if p == "Title (required)" {
 						return d, nil
 					} else if p == "Body" {
 						return d, nil
@@ -1371,6 +1436,33 @@ func Test_createRun(t *testing.T) {
 			},
 			expectedOut:    "https://github.com/OWNER/REPO/pull/12\n",
 			expectedErrOut: "\nCreating pull request for feature into master in OWNER/REPO\n\n",
+		},
+		{
+			name: "editor",
+			httpStubs: func(r *httpmock.Registry, t *testing.T) {
+				r.Register(
+					httpmock.GraphQL(`mutation PullRequestCreate\b`),
+					httpmock.GraphQLMutation(`
+						{
+						"data": { "createPullRequest": { "pullRequest": {
+							"URL": "https://github.com/OWNER/REPO/pull/12"
+							} } }
+						}
+				`, func(inputs map[string]interface{}) {
+						assert.Equal(t, "title", inputs["title"])
+						assert.Equal(t, "body", inputs["body"])
+					}))
+			},
+			setup: func(opts *CreateOptions, t *testing.T) func() {
+				opts.EditorMode = true
+				opts.HeadBranch = "feature"
+				opts.TitledEditSurvey = func(string, string) (string, string, error) { return "title", "body", nil }
+				return func() {}
+			},
+			cmdStubs: func(cs *run.CommandStubber) {
+				cs.Register("git -c log.ShowSignature=false log --pretty=format:%H%x00%s%x00%b%x00 --cherry origin/master...feature", 0, "")
+			},
+			expectedOut: "https://github.com/OWNER/REPO/pull/12\n",
 		},
 	}
 	for _, tt := range tests {
@@ -1620,6 +1712,19 @@ func Test_generateCompareURL(t *testing.T) {
 				HeadBranchLabel: "owner:!$&'()+,;=@",
 			},
 			want:    "https://github.com/OWNER/REPO/compare/main%2Ftrunk...owner:%21$&%27%28%29+%2C%3B=@?body=&expand=1",
+			wantErr: false,
+		},
+		{
+			name: "with template",
+			ctx: CreateContext{
+				BaseRepo:        api.InitRepoHostname(&api.Repository{Name: "REPO", Owner: api.RepositoryOwner{Login: "OWNER"}}, "github.com"),
+				BaseBranch:      "main",
+				HeadBranchLabel: "feature",
+			},
+			state: shared.IssueMetadataState{
+				Template: "story.md",
+			},
+			want:    "https://github.com/OWNER/REPO/compare/main...feature?body=&expand=1&template=story.md",
 			wantErr: false,
 		},
 	}

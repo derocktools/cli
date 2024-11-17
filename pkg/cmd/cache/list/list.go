@@ -106,7 +106,7 @@ func listRun(opts *ListOptions) error {
 		return fmt.Errorf("%s Failed to get caches: %w", opts.IO.ColorScheme().FailureIcon(), err)
 	}
 
-	if len(result.ActionsCaches) == 0 {
+	if len(result.ActionsCaches) == 0 && opts.Exporter == nil {
 		return cmdutil.NewNoResultsError(fmt.Sprintf("No caches found in %s", ghrepo.FullName(repo)))
 	}
 

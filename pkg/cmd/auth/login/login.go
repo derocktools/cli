@@ -15,7 +15,7 @@ import (
 	"github.com/cli/cli/v2/pkg/cmd/auth/shared/gitcredentials"
 	"github.com/cli/cli/v2/pkg/cmdutil"
 	"github.com/cli/cli/v2/pkg/iostreams"
-	ghAuth "github.com/cli/go-gh/v2/pkg/auth"
+	ghauth "github.com/cli/go-gh/v2/pkg/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -58,6 +58,9 @@ func NewCmdLogin(f *cmdutil.Factory, runF func(*LoginOptions) error) *cobra.Comm
 		Short: "Log in to a GitHub account",
 		Long: heredoc.Docf(`
 			Authenticate with a GitHub host.
+
+			The default hostname is %[1]sgithub.com%[1]s. This can be overridden using the %[1]s--hostname%[1]s
+			flag.
 
 			The default authentication mode is a web-based browser flow. After completion, an
 			authentication token will be stored securely in the system credential store.
@@ -120,7 +123,7 @@ func NewCmdLogin(f *cmdutil.Factory, runF func(*LoginOptions) error) *cobra.Comm
 			}
 
 			if opts.Hostname == "" && (!opts.Interactive || opts.Web) {
-				opts.Hostname, _ = ghAuth.DefaultHost()
+				opts.Hostname, _ = ghauth.DefaultHost()
 			}
 
 			opts.MainExecutable = f.Executable()
@@ -222,21 +225,19 @@ func loginRun(opts *LoginOptions) error {
 }
 
 func promptForHostname(opts *LoginOptions) (string, error) {
-	options := []string{"GitHub.com", "GitHub Enterprise Server"}
+	options := []string{"GitHub.com", "Other"}
 	hostType, err := opts.Prompter.Select(
-		"What account do you want to log into?",
+		"Where do you use GitHub?",
 		options[0],
 		options)
 	if err != nil {
 		return "", err
 	}
 
-	isEnterprise := hostType == 1
-
-	hostname := ghinstance.Default()
-	if isEnterprise {
-		hostname, err = opts.Prompter.InputHostname()
+	isGitHubDotCom := hostType == 0
+	if isGitHubDotCom {
+		return ghinstance.Default(), nil
 	}
 
-	return hostname, err
+	return opts.Prompter.InputHostname()
 }

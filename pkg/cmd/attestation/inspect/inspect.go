@@ -3,13 +3,16 @@ package inspect
 import (
 	"fmt"
 
+	"github.com/cli/cli/v2/internal/ghinstance"
 	"github.com/cli/cli/v2/internal/tableprinter"
+	"github.com/cli/cli/v2/pkg/cmd/attestation/api"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/artifact"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/artifact/oci"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/auth"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/io"
 	"github.com/cli/cli/v2/pkg/cmd/attestation/verification"
 	"github.com/cli/cli/v2/pkg/cmdutil"
+	ghauth "github.com/cli/go-gh/v2/pkg/auth"
 
 	"github.com/MakeNowJust/heredoc"
 	"github.com/spf13/cobra"
@@ -23,7 +26,7 @@ func NewInspectCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command
 		Hidden: true,
 		Short:  "Inspect a sigstore bundle",
 		Long: heredoc.Docf(`
-			### NOTE: This feature is currently in beta, and subject to change.
+			### NOTE: This feature is currently in public preview, and subject to change.
 
 			Inspect a downloaded Sigstore bundle for a given artifact.
 
@@ -66,8 +69,11 @@ func NewInspectCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.OCIClient = oci.NewLiveClient()
+			if opts.Hostname == "" {
+				opts.Hostname, _ = ghauth.DefaultHost()
+			}
 
-			if err := auth.IsHostSupported(); err != nil {
+			if err := auth.IsHostSupported(opts.Hostname); err != nil {
 				return err
 			}
 
@@ -77,6 +83,26 @@ func NewInspectCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command
 
 			config := verification.SigstoreConfig{
 				Logger: opts.Logger,
+			}
+			// Prepare for tenancy if detected
+			if ghauth.IsTenancy(opts.Hostname) {
+				hc, err := f.HttpClient()
+				if err != nil {
+					return err
+				}
+				apiClient := api.NewLiveClient(hc, opts.Hostname, opts.Logger)
+				td, err := apiClient.GetTrustDomain()
+				if err != nil {
+					return err
+				}
+				tenant, found := ghinstance.TenantName(opts.Hostname)
+				if !found {
+					return fmt.Errorf("Invalid hostname provided: '%s'",
+						opts.Hostname)
+				}
+
+				config.TrustDomain = td
+				opts.Tenant = tenant
 			}
 
 			opts.SigstoreVerifier = verification.NewLiveSigstoreVerifier(config)
@@ -90,6 +116,7 @@ func NewInspectCmd(f *cmdutil.Factory, runF func(*Options) error) *cobra.Command
 
 	inspectCmd.Flags().StringVarP(&opts.BundlePath, "bundle", "b", "", "Path to bundle on disk, either a single bundle in a JSON file or a JSON lines file with multiple bundles")
 	inspectCmd.MarkFlagRequired("bundle") //nolint:errcheck
+	inspectCmd.Flags().StringVarP(&opts.Hostname, "hostname", "", "", "Configure host to use")
 	cmdutil.StringEnumFlag(inspectCmd, &opts.DigestAlgorithm, "digest-alg", "d", "sha256", []string{"sha256", "sha512"}, "The algorithm used to compute a digest of the artifact")
 	cmdutil.AddFormatFlags(inspectCmd, &opts.exporter)
 
@@ -114,9 +141,9 @@ func runInspect(opts *Options) error {
 		return fmt.Errorf("failed to build policy: %v", err)
 	}
 
-	res := opts.SigstoreVerifier.Verify(attestations, policy)
-	if res.Error != nil {
-		return fmt.Errorf("at least one attestation failed to verify against Sigstore: %v", res.Error)
+	results, err := opts.SigstoreVerifier.Verify(attestations, policy)
+	if err != nil {
+		return fmt.Errorf("at least one attestation failed to verify against Sigstore: %v", err)
 	}
 
 	opts.Logger.VerbosePrint(opts.Logger.ColorScheme.Green(
@@ -125,7 +152,7 @@ func runInspect(opts *Options) error {
 
 	// If the user provides the --format=json flag, print the results in JSON format
 	if opts.exporter != nil {
-		details, err := getAttestationDetails(res.VerifyResults)
+		details, err := getAttestationDetails(opts.Tenant, results)
 		if err != nil {
 			return fmt.Errorf("failed to get attestation detail: %v", err)
 		}
@@ -138,7 +165,7 @@ func runInspect(opts *Options) error {
 	}
 
 	// otherwise, print results in a table
-	details, err := getDetailsAsSlice(res.VerifyResults)
+	details, err := getDetailsAsSlice(opts.Tenant, results)
 	if err != nil {
 		return fmt.Errorf("failed to parse attestation details: %v", err)
 	}

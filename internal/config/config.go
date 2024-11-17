@@ -10,23 +10,24 @@ import (
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/keyring"
 	o "github.com/cli/cli/v2/pkg/option"
-	ghAuth "github.com/cli/go-gh/v2/pkg/auth"
+	ghauth "github.com/cli/go-gh/v2/pkg/auth"
 	ghConfig "github.com/cli/go-gh/v2/pkg/config"
 )
 
 const (
-	aliasesKey        = "aliases"
-	browserKey        = "browser"
-	editorKey         = "editor"
-	gitProtocolKey    = "git_protocol"
-	hostsKey          = "hosts"
-	httpUnixSocketKey = "http_unix_socket"
-	oauthTokenKey     = "oauth_token"
-	pagerKey          = "pager"
-	promptKey         = "prompt"
-	userKey           = "user"
-	usersKey          = "users"
-	versionKey        = "version"
+	aliasesKey            = "aliases"
+	browserKey            = "browser"
+	editorKey             = "editor"
+	gitProtocolKey        = "git_protocol"
+	hostsKey              = "hosts"
+	httpUnixSocketKey     = "http_unix_socket"
+	oauthTokenKey         = "oauth_token"
+	pagerKey              = "pager"
+	promptKey             = "prompt"
+	preferEditorPromptKey = "prefer_editor_prompt"
+	userKey               = "user"
+	usersKey              = "users"
+	versionKey            = "version"
 )
 
 func NewConfig() (gh.Config, error) {
@@ -137,6 +138,11 @@ func (c *cfg) Prompt(hostname string) gh.ConfigEntry {
 	return c.GetOrDefault(hostname, promptKey).Unwrap()
 }
 
+func (c *cfg) PreferEditorPrompt(hostname string) gh.ConfigEntry {
+	// Intentionally panic if there is no user provided value or default value (which would be a programmer error)
+	return c.GetOrDefault(hostname, preferEditorPromptKey).Unwrap()
+}
+
 func (c *cfg) Version() o.Option[string] {
 	return c.get("", versionKey)
 }
@@ -200,7 +206,7 @@ func (c *AuthConfig) ActiveToken(hostname string) (string, string) {
 	if c.tokenOverride != nil {
 		return c.tokenOverride(hostname)
 	}
-	token, source := ghAuth.TokenFromEnvOrConfig(hostname)
+	token, source := ghauth.TokenFromEnvOrConfig(hostname)
 	if token == "" {
 		var err error
 		token, err = c.TokenFromKeyring(hostname)
@@ -209,6 +215,12 @@ func (c *AuthConfig) ActiveToken(hostname string) (string, string) {
 		}
 	}
 	return token, source
+}
+
+// HasActiveToken returns true when a token for the hostname is present.
+func (c *AuthConfig) HasActiveToken(hostname string) bool {
+	token, _ := c.ActiveToken(hostname)
+	return token != ""
 }
 
 // HasEnvToken returns true when a token has been specified in an
@@ -228,7 +240,7 @@ func (c *AuthConfig) HasEnvToken() bool {
 	// It has to use a hostname that is not going to be found in the hosts so that it
 	// can guarantee that tokens will only be returned from a set env var.
 	// Discussed here, but maybe worth revisiting: https://github.com/cli/cli/pull/7169#discussion_r1136979033
-	token, _ := ghAuth.TokenFromEnvOrConfig(hostname)
+	token, _ := ghauth.TokenFromEnvOrConfig(hostname)
 	return token != ""
 }
 
@@ -270,7 +282,7 @@ func (c *AuthConfig) Hosts() []string {
 	if c.hostsOverride != nil {
 		return c.hostsOverride()
 	}
-	return ghAuth.KnownHosts()
+	return ghauth.KnownHosts()
 }
 
 // SetHosts will override any hosts resolution and return the given
@@ -285,7 +297,7 @@ func (c *AuthConfig) DefaultHost() (string, string) {
 	if c.defaultHostOverride != nil {
 		return c.defaultHostOverride()
 	}
-	return ghAuth.DefaultHost()
+	return ghauth.DefaultHost()
 }
 
 // SetDefaultHost will override any host resolution and return the given
@@ -509,6 +521,8 @@ git_protocol: https
 editor:
 # When to interactively prompt. This is a global config that cannot be overridden by hostname. Supported values: enabled, disabled
 prompt: enabled
+# Preference for editor-based interactive prompting. This is a global config that cannot be overridden by hostname. Supported values: enabled, disabled
+prefer_editor_prompt: disabled
 # A pager program to send command output to, e.g. "less". If blank, will refer to environment. Set the value to "cat" to disable the pager.
 pager:
 # Aliases allow you to create nicknames for gh commands
@@ -553,6 +567,15 @@ var Options = []ConfigOption{
 		AllowedValues: []string{"enabled", "disabled"},
 		CurrentValue: func(c gh.Config, hostname string) string {
 			return c.Prompt(hostname).Value
+		},
+	},
+	{
+		Key:           preferEditorPromptKey,
+		Description:   "toggle preference for editor-based interactive prompting in the terminal",
+		DefaultValue:  "disabled",
+		AllowedValues: []string{"enabled", "disabled"},
+		CurrentValue: func(c gh.Config, hostname string) string {
+			return c.PreferEditorPrompt(hostname).Value
 		},
 	},
 	{
